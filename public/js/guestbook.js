@@ -1,3 +1,5 @@
+let currentUser = null;
+
 async function deleteEntry(id) {
     if (!confirm('Delete this message?')) return;
 
@@ -39,7 +41,6 @@ async function saveEdit(entry, newMsg) {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    name: entry.name,
                     msg: newMsg
                 })
             }
@@ -107,6 +108,11 @@ async function loadMessages() {
 
         const messages = await response.json();
 
+        if (!currentUser) {
+            const userResponse = await fetch('/api/whoami');
+            currentUser = await userResponse.json();
+        }
+
         list.innerHTML = '';
 
         [...messages].reverse().forEach(entry => {
@@ -130,23 +136,30 @@ async function loadMessages() {
                 li.append(edited);
             }
 
-            const editButton = document.createElement('button');
-            editButton.type = 'button';
-            editButton.textContent = 'Edit';
+            const canEdit =
+                entry.authorId === currentUser.userId ||
+                currentUser.role === 'admin';
 
-            editButton.addEventListener('click', () => {
-                startEdit(li, entry);
-            });
+            if (canEdit) {
+                const editButton = document.createElement('button');
+                editButton.type = 'button';
+                editButton.textContent = 'Edit';
 
-            const deleteButton = document.createElement('button');
-            deleteButton.type = 'button';
-            deleteButton.textContent = 'Delete';
+                editButton.addEventListener('click', () => {
+                    startEdit(li, entry);
+                });
 
-            deleteButton.addEventListener('click', () => {
-                deleteEntry(entry.id);
-            });
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.textContent = 'Delete';
 
-            li.append(editButton, deleteButton);
+                deleteButton.addEventListener('click', () => {
+                    deleteEntry(entry.id);
+                });
+
+                li.append(editButton, deleteButton);
+            }
+
             list.append(li);
         });
     } catch (err) {
@@ -170,7 +183,6 @@ document.querySelector('#guestbook-form').addEventListener(
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    name: document.querySelector('#name').value,
                     msg: document.querySelector('#msg').value
                 })
             });

@@ -162,6 +162,21 @@ function requireAuth(req, res, next) {
     next();
 }
 
+function requireApiAuth(req, res, next) {
+    if (!req.session.userId) {
+        return res.status(401).json({
+            error: 'Please log in first.'
+        });
+    }
+
+    next();
+}
+
+function canModify(req, entry) {
+    return entry.authorId === req.session.userId ||
+        req.session.role === 'admin';
+}
+
 function requireAdminPage(req, res, next) {
     if (!req.session.userId || req.session.role !== 'admin') {
         return res.redirect('/');
@@ -338,7 +353,7 @@ app.get('/guestbook', requireAuth, (req, res, next) => {
 
 // READ ALL GUESTBOOK ENTRIES
 
-app.get('/api/guestbook', requireAuth, async (req, res, next) => {
+app.get('/api/guestbook', requireApiAuth, async (req, res, next) => {
     try {
         const entries = await db.getAllEntries();
         res.json(entries);
@@ -456,9 +471,11 @@ app.get('/api/space', async (req, res, next) => {
 
 // GUESTBOOK: CREATE
 
-app.post('/api/guestbook', requireAuth, async (req, res, next) => {
+app.post('/api/guestbook', requireApiAuth, async (req, res, next) => {
     try {
-        const { name, msg } = req.body;
+        const { msg } = req.body;
+        const name = req.session.username;
+
         const error = validateEntry(name, msg);
 
         if (error) {
@@ -474,8 +491,9 @@ app.post('/api/guestbook', requireAuth, async (req, res, next) => {
         }
 
         const entry = await db.addEntry({
-            name: name.trim(),
-            msg: cleanedInput
+            name,
+            msg: cleanedInput,
+            authorId: req.session.userId
         });
 
         res.status(201).json(entry);
@@ -486,7 +504,7 @@ app.post('/api/guestbook', requireAuth, async (req, res, next) => {
 
 // GUESTBOOK: READ ONE
 
-app.get('/api/guestbook/:id', requireAuth, async (req, res, next) => {
+app.get('/api/guestbook/:id', requireApiAuth, async (req, res, next) => {
     try {
         const entry = await db.getEntryById(req.params.id);
 
@@ -502,10 +520,22 @@ app.get('/api/guestbook/:id', requireAuth, async (req, res, next) => {
 
 // GUESTBOOK: UPDATE
 
-app.put('/api/guestbook/:id', requireAuth, async (req, res, next) => {
+app.put('/api/guestbook/:id', requireApiAuth, async (req, res, next) => {
     try {
-        const { name, msg } = req.body;
-        const error = validateEntry(name, msg);
+        const { msg } = req.body;
+        const entry = await db.getEntryById(req.params.id);
+
+        if (!entry) {
+            return res.status(404).json({ error: 'Entry not found.' });
+        }
+
+        if (!canModify(req, entry)) {
+            return res.status(403).json({
+                error: 'You can only edit your own messages.'
+            });
+        }
+
+        const error = validateEntry(entry.name, msg);
 
         if (error) {
             return res.status(400).json({ error });
@@ -519,14 +549,10 @@ app.put('/api/guestbook/:id', requireAuth, async (req, res, next) => {
             });
         }
 
-        const updated = await db.updateEntry(req.params.id, {
-            name: name.trim(),
+        const updated = await db.updateEntry(entry.id, {
+            name: entry.name,
             msg: cleanedInput
         });
-
-        if (!updated) {
-            return res.status(404).json({ error: 'Entry not found.' });
-        }
 
         res.json(updated);
     } catch (err) {
@@ -536,14 +562,21 @@ app.put('/api/guestbook/:id', requireAuth, async (req, res, next) => {
 
 // GUESTBOOK: DELETE
 
-app.delete('/api/guestbook/:id', requireAuth, async (req, res, next) => {
+app.delete('/api/guestbook/:id', requireApiAuth, async (req, res, next) => {
     try {
-        const deleted = await db.deleteEntry(req.params.id);
+        const entry = await db.getEntryById(req.params.id);
 
-        if (!deleted) {
+        if (!entry) {
             return res.status(404).json({ error: 'Entry not found.' });
         }
 
+        if (!canModify(req, entry)) {
+            return res.status(403).json({
+                error: 'You can only delete your own messages.'
+            });
+        }
+
+        await db.deleteEntry(entry.id);
         res.status(204).end();
     } catch (err) {
         next(err);
